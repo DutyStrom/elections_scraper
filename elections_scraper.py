@@ -61,4 +61,19 @@ def data_scraper(parsed_html):
     parsed_village_url = urlparse(village_url)
     village_number = parse_qs(parsed_village_url.query)["xobec"][0]
 
-    ...
+
+    village_selector = parsed_html.select_one("#publikace > h3:nth-child(4)")
+    village_name = str(village_selector.string).split(maxsplit=1)[1].strip()
+
+
+    main_table = parsed_html.find(id="ps311_t1")
+    main_table_value = main_table.find_all(class_="cislo", headers=["sa2", "sa3", "sa6"])
+
+    #testing dict - main table data
+    data_header = ["registered", "envelopes", "valid"]
+    data_value = [tag.string for tag in main_table_value]
+    data_dict = dict(zip(data_header, data_value))
+
+    return data_dict
+
+print(data_scraper(html_parse(get_html_data(URL))))
