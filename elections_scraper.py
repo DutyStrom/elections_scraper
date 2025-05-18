@@ -24,30 +24,35 @@ web_base = "https://www.volby.cz/pls/ps2017nss/"
 
 def mandatory_args():
 
-    def url_check(url): # upravit na odpovidajici url
-        parsed_url = urlparse(url)
-        return bool(parsed_url.scheme) and bool(parsed_url.netloc)
-    
+    def url_check(url):
+
+        if re.match("^https?://", url):
+            return url
+        else:
+            raise argparse.ArgumentTypeError(f"'{url}' must be valid URL of the specified district")
     
     def file_name_check(file_name):
-        return file_name.endswith(".csv")
+        
+        if file_name.endswith(".csv"):
+            return file_name
+        else:
+            raise argparse.ArgumentTypeError(f"'{file_name}' should have format: 'filename.csv'")
     
     parser = argparse.ArgumentParser(prog="Election Scraper",
                                         description="""
-                                                    The script scrapes data from a webpage 
+                                                    The 'Elections scraper' scrapes data from a webpage 
                                                     corresponding to the selected administrative 
                                                     unit's URL and saves the extracted data into a 
                                                     CSV file with a specified filename.
                                                     """
                                     )
-    parser.add_argument("url", help="User-defined URL of the administrative unit", action="store", metavar="<URL>")
-    parser.add_argument("file_name", help="'Filename.csv' where the results should be saved", action="store", metavar="<file_name>")
+    parser.add_argument("url", 
+                        help="User-defined 'URL' (wrapped in quotes) of the administrative unit", 
+                        action="store", metavar="<URL>", type=url_check)
+    parser.add_argument("file_name", 
+                        help="'filename.csv' where the results should be saved", 
+                        action="store", metavar="<file_name>", type=file_name_check)
     args = parser.parse_args()
-
-
-    if not url_check(args.url) and not file_name_check(args.file_name): # lepe zformatovat a popsat
-        print(f"First argument: '{args.url}' must be valid URL, and second argument: '{args.file_name}' should have format: 'filename.csv'")
-        sys.exit()
 
     return args.url, args.file_name
 
