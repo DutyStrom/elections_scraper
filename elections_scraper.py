@@ -33,7 +33,7 @@ def mandatory_args() -> tuple[str, str]:
 
     def url_check(url: str) -> str:
 
-        if re.match("^https?://", url):
+        if re.match(f"^{WEB_BASE}", url):
             return url
         else:
             raise argparse.ArgumentTypeError(f"'{url}' must be valid URL of the specified district")
@@ -209,8 +209,8 @@ def data_writer(overall_data: list[dict[str, str]], file_name: str, _mode: str="
     except FileExistsError as feer:
 
         proceed_check = input(textwrap.dedent(f"""
-                            File with specified name '{file_name}' already exists!\n
-                            If you continue, the existing data will be overwritten!!\n
+                            File with specified name '{file_name}' already exists!
+                            If you continue, the existing data will be overwritten!!
                             Want to continue?[Y/N]
                             """)
                             )
