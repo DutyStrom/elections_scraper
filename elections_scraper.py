@@ -16,7 +16,8 @@ import csv
 import argparse
 from bs4 import BeautifulSoup as bs, element
 from urllib.parse import urlparse, parse_qs, urljoin
-from typing import TYPE_CHECKING
+import time
+import threading
 
 
 WEB_BASE: str = "https://www.volby.cz/pls/ps2017nss/"
@@ -36,7 +37,7 @@ def mandatory_args() -> tuple[str, str]:
         if re.match(f"^{WEB_BASE}", url):
             return url
         else:
-            raise argparse.ArgumentTypeError(f"'{url}' must be valid URL of the specified district")
+            raise argparse.ArgumentTypeError(f"'{url}' must be valid absolute URL of the specified district")
     
     def file_name_check(file_name: str) -> str:
         
@@ -57,7 +58,7 @@ def mandatory_args() -> tuple[str, str]:
                         help="User-defined 'URL' (wrapped in quotes) of the administrative unit", 
                         action="store", metavar="<URL>", type=url_check)
     parser.add_argument("file_name", 
-                        help="'filename.csv' where the results should be saved", 
+                        help="'filename.csv' name of the CSV file where the results should be saved", 
                         action="store", metavar="<file_name>", type=file_name_check)
     args = parser.parse_args()
 
@@ -105,10 +106,11 @@ def html_parse(request_result: requests.Response) -> bs:
     return parsed_result
 
 
-def villages_rel_url_scraper(parsed_result: bs) -> element.ResultSet[element.NavigableString]:
+def villages_rel_url_scraper(parsed_result: bs) -> element.ResultSet[element.NavigableString]:  #condition!!!
     """Scrap relative village URL from the parsed village HTML. Return bs4.ResultSet of NavigableStrings."""    
     villages_url_tags = parsed_result.find_all("td", class_="cislo", headers=re.compile("t.sa1 t.sb1"))
-
+    foreign_villages_url_tags = parsed_result.find_all("td", class_="cislo", headers="s4")
+    
     villages_rel_urls = [tag.a["href"] for tag in villages_url_tags]
     
     return villages_rel_urls
@@ -132,6 +134,7 @@ def elections_results_scraper(parsed_result: bs) -> dict[str, str]:
     Returns:
         scrap_data_dict (dict{str: str}): Results stored in dictionary."""
 
+
     scrap_data_dict = dict(code="", location="", registered="", envelopes="", valid="")    
     village_number_url = parsed_result.find("div", class_="tab_full_ps311").a["href"]
 
@@ -142,7 +145,7 @@ def elections_results_scraper(parsed_result: bs) -> dict[str, str]:
 
     # village name
     village_name_selector = parsed_result.select_one("#publikace > h3:nth-child(4)")
-    village_name = str(village_name_selector.string).split(maxsplit=1)[1].strip()
+    village_name = str(village_name_selector.string).split(maxsplit=1)[1].strip()   # change fromm css.selector!!!
     scrap_data_dict["location"] = village_name
 
     # overall village results
@@ -168,6 +171,18 @@ def elections_results_scraper(parsed_result: bs) -> dict[str, str]:
     scrap_data_dict |= parties_dict # update dictionary "scrap_data_dict" with dict "parties_dict"
 
     return scrap_data_dict
+
+# stop_flag = False
+
+# def spinner():
+
+#     spinner = ["|", "/", "-", "\\", "|", "/", "-", "\\"]
+
+#     while not stop_flag:
+#         for char in spinner:
+#             sys.stdout.write(f"\rScraping...{char}")
+#             sys.stdout.flush()
+#             time.sleep(0.2)
 
 
 def combine_scraped_data(villages_urls: list[str]) -> list[dict[str, str]]:
@@ -207,7 +222,7 @@ def data_writer(overall_data: list[dict[str, str]], file_name: str, _mode: str="
             writer.writerows(overall_data)
 
     except FileExistsError as feer:
-
+                
         proceed_check = input(textwrap.dedent(f"""
                             File with specified name '{file_name}' already exists!
                             If you continue, the existing data will be overwritten!!
