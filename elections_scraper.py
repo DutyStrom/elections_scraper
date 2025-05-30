@@ -22,6 +22,8 @@ import threading
 
 WEB_BASE: str = "https://www.volby.cz/pls/ps2017nss/"
 
+stop_event = threading.Event() # stop event flag for threading
+
 
 def mandatory_args() -> tuple[str, str]:
     """
@@ -106,24 +108,37 @@ def html_parse(request_result: requests.Response) -> bs:
     return parsed_result
 
 
-def villages_rel_url_scraper(parsed_result: bs) -> element.ResultSet[element.NavigableString]:  #condition!!!
-    """Scrap relative village URL from the parsed village HTML. Return bs4.ResultSet of NavigableStrings."""    
-    villages_url_tags = parsed_result.find_all("td", class_="cislo", headers=re.compile("t.sa1 t.sb1"))
-    foreign_villages_url_tags = parsed_result.find_all("td", class_="cislo", headers="s4")
+def villages_rel_url_scraper(parsed_result: bs, abroad: bool = False) -> list[element.NavigableString]:
+    """Scrap relative village URL from the parsed village HTML. Return bs4.ResultSet of NavigableStrings."""
+    if abroad:
+        villages_url_tags = parsed_result.find_all("td", class_="cislo", headers="s4")
+    else:
+        villages_url_tags = parsed_result.find_all("td", class_="cislo", headers=re.compile("t.sa1 t.sb1"))
     
     villages_rel_urls = [tag.a["href"] for tag in villages_url_tags]
     
     return villages_rel_urls
 
 
-def url_completer(villages_rel_urls: element.ResultSet[element.NavigableString]) -> list[str]:
+def url_completer(villages_rel_urls: list[element.NavigableString]) -> list[str]:
     """Combine URL base with scraped relative URL into the absolute URL and save it in a list."""
     villages_urls = [urljoin(WEB_BASE, url) for url in villages_rel_urls]
     
     return villages_urls
 
 
-def elections_results_scraper(parsed_result: bs) -> dict[str, str]:
+def village_number_scraper(village_url):
+
+    scrap_data_dict = dict()
+    
+    parsed_village_url = urlparse(village_url)
+    village_number = parse_qs(parsed_village_url.query)["xobec"][0]
+    scrap_data_dict["code"] = village_number
+
+    return scrap_data_dict
+
+
+def elections_results_scraper(parsed_result: bs, scrap_data_dict: dict[str, str]) -> dict[str, str]:
     """
     Find 'village name', 'village number', 'overall village elections results' 
     and 'names and results of election parties' in parsed HTML.
@@ -134,23 +149,13 @@ def elections_results_scraper(parsed_result: bs) -> dict[str, str]:
     Returns:
         scrap_data_dict (dict{str: str}): Results stored in dictionary."""
 
-
-    scrap_data_dict = dict(code="", location="", registered="", envelopes="", valid="")    
-    village_number_url = parsed_result.find("div", class_="tab_full_ps311").a["href"]
-
-    #village number
-    parsed_village_number_url = urlparse(village_number_url)
-    village_number = parse_qs(parsed_village_number_url.query)["xobec"][0]
-    scrap_data_dict["code"] = village_number
-
     # village name
-    village_name_selector = parsed_result.select_one("#publikace > h3:nth-child(4)")
-    village_name = str(village_name_selector.string).split(maxsplit=1)[1].strip()   # change fromm css.selector!!!
+    village_name_selector = parsed_result.select("div#publikace.topline > h3")
+    village_name = village_name_selector[-1].string.split(maxsplit=1)[1].strip()
     scrap_data_dict["location"] = village_name
 
     # overall village results
-    main_table = parsed_result.find(id="ps311_t1")
-    main_table_value = main_table.find_all(class_="cislo", headers=["sa2", "sa3", "sa6"])
+    main_table_value = parsed_result.find_all(class_="cislo", headers=["sa2", "sa3", "sa6"])
 
     overall_results_header = ["registered", "envelopes", "valid"]
     overall_results_value = [tag.string for tag in main_table_value]
@@ -172,17 +177,20 @@ def elections_results_scraper(parsed_result: bs) -> dict[str, str]:
 
     return scrap_data_dict
 
-# stop_flag = False
 
-# def spinner():
+def spinner() -> None:  # spinner and threading with help of ChatGPT
+    """Print the animated slash to the command-line."""
+    spinner = ["|", "/", "-", "\\", "|", "/", "-", "\\"]
 
-#     spinner = ["|", "/", "-", "\\", "|", "/", "-", "\\"]
-
-#     while not stop_flag:
-#         for char in spinner:
-#             sys.stdout.write(f"\rScraping...{char}")
-#             sys.stdout.flush()
-#             time.sleep(0.2)
+    while not stop_event.is_set():
+        for char in spinner:
+            sys.stdout.write(f"\rScraping...{char}")
+            sys.stdout.flush()
+            time.sleep(0.2)
+            if stop_event.is_set():
+                print("\n")
+                break
+        
 
 
 def combine_scraped_data(villages_urls: list[str]) -> list[dict[str, str]]:
@@ -199,9 +207,12 @@ def combine_scraped_data(villages_urls: list[str]) -> list[dict[str, str]]:
     overall_data = list()
 
     for url in villages_urls:
-        single_village_data = elections_results_scraper(html_parse(get_raw_html(url)))
+        village_number = village_number_scraper(url)
+        single_village_data = elections_results_scraper(html_parse(get_raw_html(url)), village_number)
         overall_data.append(single_village_data)
     
+    stop_event.set() # sets "stop_event" for threading to True
+
     return overall_data
 
 def data_writer(overall_data: list[dict[str, str]], file_name: str, _mode: str="x") -> None:
@@ -224,9 +235,9 @@ def data_writer(overall_data: list[dict[str, str]], file_name: str, _mode: str="
     except FileExistsError as feer:
                 
         proceed_check = input(textwrap.dedent(f"""
-                            File with specified name '{file_name}' already exists!
+                            File with the specified name '{file_name}' already exists!
                             If you continue, the existing data will be overwritten!!
-                            Want to continue?[Y/N]
+                            Do you want to continue?[Y/N]
                             """)
                             )
         
@@ -250,24 +261,37 @@ def data_writer(overall_data: list[dict[str, str]], file_name: str, _mode: str="
         print(exc)
         sys.exit(1)
     else:
-        print(f"File '{file_name}' succesfuly created with requested elections data\nProgram terminated")
+        print(f"File '{file_name}' succesfuly created with requested elections data.\nProgram terminated")
         sys.exit(0)
 
 
 def main():
     
     args = mandatory_args()
-
+    
     soup = html_parse(get_raw_html(args[0]))
 
-    links = url_completer(villages_rel_url_scraper(soup))
+    if urlparse(args[0]).path.split("/")[-1] == "ps36": # Checks if the User-specified URL is "Foreign" URL
+        links = url_completer(villages_rel_url_scraper(soup, True))
+    else:
+        links = url_completer(villages_rel_url_scraper(soup))
+
+    # Thread objects for simultaneously running "spinner()" and "combine_scraped_data()".
+    spinner_thread = threading.Thread(target=spinner)
+    scraper_thread = threading.Thread(target=combine_scraped_data, args=[links])
+
+    # Start of both threads
+    spinner_thread.start()
+    scraper_thread.start()
 
     scraped_data = combine_scraped_data(links)
+
+    # ending both threads
+    spinner_thread.join()
+    scraper_thread.join()
 
     data_writer(scraped_data, args[1])
 
 
 if __name__ == "__main__":
     main()
-
-# https://github.com/DutyStrom/elections_scraper.git
